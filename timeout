@@ -2,6 +2,7 @@
 #   Copyright 2010-2011 Institute for System Programming
 #                       of Russian Academy of Sciences
 #   Copyright 2012      Pavel Shved <pavel.shved@gmail.com>
+#   Copyright 2020      humbletim <humbletim@gmail.com> # added -q sysmemlimit option
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -23,7 +24,7 @@
 
 sub usage{ print STDERR <<usage_ends;
 Usage:
-	timeout [-t timelimit] [-m memlimit] [-x hertz] command [arguments ...]
+	timeout [-t timelimit] [-m memlimit] [-q sysmemlimit%] [-x hertz] command [arguments ...]
 
 usage_ends
 	die;
@@ -54,7 +55,9 @@ my $info_on_success = 1;
 # Do not conceal the exit code of the controlled process if timeout kills it.
 my $confess = '';
 
+my $sysmemlimit = undef;
 GetOptions(
+        'sysmemlimit|q=f'=>\$sysmemlimit,
 	'timelimit|t=f'=>\$timelimit,
 	'hanguplimit|h=i'=>\$hanguplimit,
 	'detect-hangup!'=>\$kill_stale,
@@ -121,10 +124,12 @@ use Time::HiRes qw( ualarm usleep );
 my $timeinfo = { total => 0, finished => 0, current => {} };
 # For this -- update_memory
 my $meminfo = 0;
+my $sysmeminfo = 0;
 my $meminfo_rss = 0;
 my $fulltime = 0;
 # We store the "maximum" used memory (the process may free it and we won't get the proper timestamp at the end).
 my $maxmem = -1;
+my $maxsysmem = -1;
 my $maxmem_rss = -1;
 
 # Default ticklimit - limit of number of timeout script wakeups (ticks) before we decide that the controlling processes are hang up (if they haven't done any useful work).  We use ticks instead of real time seconds because the whole stack may be paused with SIGSTOP, and should not die in this case.
@@ -153,6 +158,8 @@ while ($status eq 'wait'){
 			$meminfo = update_memory($blackbox_pid,$meminfo);
 			$meminfo_rss = update_memory_rss($blackbox_pid,$meminfo_rss);
 			$maxmem = $meminfo if $meminfo > $maxmem;
+			$sysmeminfo = 0 + `free | awk '/Mem/\{printf("%.3f"), \$3/(\$2+.000000001)*100\}'`;
+			$maxsysmem = $sysmeminfo if $sysmeminfo > $maxsysmem;
 			$maxmem_rss = $meminfo_rss if $meminfo_rss > $maxmem_rss;
 			update_info_by_ucmd($blackbox_pid,$uinfo);
 			die "Assume waitpid return 0\n";
@@ -187,6 +194,7 @@ while ($status eq 'wait'){
 		# Check if limits are exhausted (they should be updated by signal handler).
 		# First kill, then print the script's verdict, so that it's less likely to mingle with the output of the process being controlled.
 		if (my $reason = limits_exceeded()){
+			print STDERR "TIMEOUT: LIMITS_EXCEEDED '$reason'\n";
 			kill_process_group_safely($blackbox_pid);
 			# have some sleep for output to be flushed
 			usleep($uflush_time);
@@ -446,7 +454,7 @@ sub print_uinfo
 	my $reason = shift;
 	# Print generic information to STDERR
 	my $ticks = $timeinfo->{ticks_stale} || 0;
-	printf STDERR "${id_str}%s CPU %.2f MEM %d MAXMEM %d STALE %d MAXMEM_RSS %d\n", $reason, $timeinfo->{total}, $meminfo, $maxmem, ceil($ticks/$frequency), $maxmem_rss if ($reason ne 'FINISHED') || $info_on_success;
+	printf STDERR "${id_str}%s CPU %.2f MEM %d MAXMEM %d SYSMEM %.1f%% MAXSYSTEM %.1f%% STALE %d MAXMEM_RSS %d\n", $reason, $timeinfo->{total}, $meminfo, $maxmem, $maxsysmem, $sysmemlimit, ceil($ticks/$frequency), $maxmem_rss if ($reason ne 'FINISHED') || $info_on_success;
 
 	if (defined $output){
 		open(FIL,">>", $output) or die "Can't open output file: $!\n";
@@ -498,6 +506,8 @@ sub limits_exceeded
 		return 'HANGUP';
 	}elsif (defined $memlimit && $meminfo > $memlimit){
 		return 'MEM';
+	}elsif (defined $sysmemlimit && $sysmeminfo > $sysmemlimit){
+		return 'SYSMEM';
 	}elsif (defined $memlimit_rss && $meminfo_rss > $memlimit_rss){
 		return 'MEM_RSS';
 	}
