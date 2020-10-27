@@ -49,6 +49,7 @@ The basic options are:
 
 * `-t T` - set up CPU+SYS time limit to T seconds
 * `-m M` - set up virtual memory limit to M kilobytes
+* `-q N` - set up system-wide memory limit to N perecent of total
 * `TIMEOUT_IDSTR` environment variable - a custom string prepended to the
   message about resource violation (to distinguish from the lines printed by
   the command itself).  The message itself may be:
@@ -88,6 +89,8 @@ Advanced options:
   process is terminated.  Without this option, the script returns zero.
 
 * `--memlimit-rss`, `-s` - monitor RSS (resident set size) memory limit
+
+* `--sysmemlimit N` - monitor system-wide memory usage and limit to N% of total
 
 More options may be read in the script itself.  More documentation will be
 added in the future releases!
@@ -165,6 +168,10 @@ Detect hangups:
     ./timeout --detect-hangups -p '.*sleep.*,SLEEP' -t 5 sleep 10000
     Outputs:
     HANGUP CPU 0.00 MEM 19760 MAXMEM 19760 STALE 6
+
+Terminate process and all children in the event total system memory is about to become exhausted:
+
+    ./timeout -q 99 sacrificable-process-or-shell-script
 
 
 
